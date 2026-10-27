@@ -32,5 +32,6 @@
         "uri": "https://${cluster_name}.byoc.unison.cloud"
       }
     ],
-    "cloudApiTcpConfig": { "type": "everybody" }
+    "cloudApiTcpConfig": { "type": "everybody" },
+    "clusterMap": {}
 }
