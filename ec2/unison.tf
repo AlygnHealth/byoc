@@ -1,22 +1,43 @@
 # Security group for Unison Cloud instances
+#
+# Public traffic reaches a node only through the load balancer. The internal
+# HTTP server (8081: health, /internal/shutdown, /internal/reload-config) and
+# the peer TCP port (9091) are open to the load balancer's health check and to
+# other nodes, never to the internet.
 resource "aws_security_group" "unison" {
   name_prefix = "${var.cluster_name}-unison-"
   vpc_id      = module.vpc.vpc_id
 
   ingress {
-    description     = "Health check from ALB"
-    from_port       = 8081
+    description     = "Service traffic from the ALB"
+    from_port       = 8082
     to_port         = 8082
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
 
   ingress {
-    description = "Health check from internal NLB"
+    description     = "Health check from the ALB"
+    from_port       = 8081
+    to_port         = 8081
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    description = "Node to node: gossip and public HTTP"
     from_port   = 8081
     to_port     = 8082
     protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr, "0.0.0.0/0"]
+    self        = true
+  }
+
+  ingress {
+    description = "Node to node: peer TCP"
+    from_port   = 9091
+    to_port     = 9091
+    protocol    = "tcp"
+    self        = true
   }
 
   egress {
@@ -32,6 +53,10 @@ resource "aws_security_group" "unison" {
     Environment = "byoc"
     Project     = "unison-cloud"
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 data "cloudinit_config" "unison-cloudinint" {
@@ -39,15 +64,19 @@ data "cloudinit_config" "unison-cloudinint" {
     merge_type   = "list(append)+dict(recurse_array)+str()"
     content_type = "text/cloud-config"
     content = templatefile("${path.module}/cloud-init.yaml", {
-      unison_cloud_image_tag = var.unison_cloud_image_tag
-      region                 = data.aws_region.current.name
-      config_template        = base64encode(templatefile("${path.module}/config.json.template", {
+      unison_cloud_image      = var.unison_cloud_image
+      unison_cloud_image_tag  = var.unison_cloud_image_tag
+      region                  = data.aws_region.current.name
+      cluster_token_parameter = aws_ssm_parameter.cluster_token.name
+      vault_token_parameter   = local.vault_token_parameter
+      config_template = base64encode(templatefile("${path.module}/config.json.template", {
         blob_bucket_name     = aws_s3_bucket.unison_cloud_byoc_blobs.bucket
         services_bucket_name = aws_s3_bucket.unison_cloud_byoc_native_services.bucket
-        cluster_token        = data.http.cluster_token.response_body
         region               = data.aws_region.current.name
         dynamodb_table       = aws_dynamodb_table.unison_cloud_byoc_state.id
         cluster_name         = var.cluster_name
+        vault_host           = local.vault_private_ip
+        environments_mount   = var.environments_mount
       }))
     })
   }
@@ -66,6 +95,24 @@ resource "aws_launch_template" "unison" {
 
   iam_instance_profile {
     name = aws_iam_instance_profile.unison.name
+  }
+
+  # IMDSv2 only. The hop limit of 2 lets the nimbus container itself refresh
+  # the instance role's credentials, as its wrapper does every 15 minutes.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = 30
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
   }
 
   user_data = data.cloudinit_config.unison-cloudinint.rendered
@@ -130,4 +177,6 @@ resource "aws_autoscaling_group" "unison" {
       min_healthy_percentage = 50
     }
   }
+
+  depends_on = [terraform_data.cluster_registration]
 }

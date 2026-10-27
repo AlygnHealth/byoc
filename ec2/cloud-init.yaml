@@ -6,24 +6,18 @@ packages:
   - docker
   - awscli
 
-users:
-  - name: unison
-    groups:
-      - sudo
-      - docker
-    sudo: ['ALL=(ALL) NOPASSWD:ALL']
-    ssh_authorized_keys:
-      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC1GlJMiJqk8u4lsGdIUDqgeS2xu3aZqn5gX31dQYOVJg5jADKv1LY7c+0NCApZeX2RR5kVKQQnTwm1xh2DiQA/TXCLdM461O2oTS8eoEQLnHw21uV84lOkgIYHJRFtgx2YDPbTfI6TMShXbVTIFyp/KYszbXC9IEI2IdrJfAMDAy5fQLzUQDM/ekrzdr9Y+Cczjxku61d4gtOyBQAbObK9zMVl3oL8cXOGiuugVxqVwBQtQfPoCCm5Ldvt5Fr0Ama+ERGxn1ZbEBz0VTlLVF0n64j7hqI8foG/2eg5vtMIM8LhzEbTSVyg2m5s2RqjnwkGaMVAj/BW9DNeeFANzZa5 stew@basil
-      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDiVtfvc+Y6Gwu8A3WsP3S09tefEE1QeSMe7MWA+llp1VIQb1NXWNL3SJuogP/cXPcGE/MsiFAYJdSKffgawXau6YVR/2fPVZlgytWdPdcvlDTv1Viy7U93I/7RjYLbDDP5Sh6ImeNb6BBnMuFHlkPuwx5p4/PmxGL2M8W9cdYf2uuNt/YToPAuCfJHeX+WOeNb3INomEwlqqUlm/PLn+ZIxgGuXbtZxLKObyZH022ihcAP0xik9n0GhbuXHYI9qv+DDb/0d4lsqFYpOp4TROb6nCsm5Mw2Z5XX5HcS4MJUzsnijyxIZen1GT2Y9vDgK5U7NbOqovvgJPjs5OPKQX5F ceedubs@gmail.com
+# No SSH users or keys: operators reach a node through SSM Session Manager
+# (`aws ssm start-session --target <instance-id>`), which needs no open port.
 
 runcmd:
   - systemctl start docker
   - systemctl enable docker
   - mkdir -p /etc/nimbus/secrets
-  - sed s/IPADDRESS/$(ec2-metadata -o | cut -d " " -f 2)/g < /etc/nimbus-template/config.template.json > /etc/nimbus/secrets/partial-config.json
+  - chmod 700 /etc/nimbus/secrets
+  - IMDS=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60") && sed s/IPADDRESS/$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS" http://169.254.169.254/latest/meta-data/local-ipv4)/g < /etc/nimbus-template/config.template.json > /etc/nimbus/secrets/partial-config.json
   - systemctl daemon-reload
-  - systemctl enable unison-cloud
-  - systemctl start unison-cloud
+  - systemctl enable --now nimbus-vault-token.service
+  - systemctl enable --now unison-cloud
 
 write_files:
   - path: /etc/nimbus-template/config.template.json
@@ -31,13 +25,65 @@ write_files:
     encoding: base64
     content: ${config_template}
 
+  # The cluster token is kept in SSM Parameter Store rather than in this
+  # launch template's user data, so it never sits in OpenTofu state or in
+  # anything that can read a launch template. The wrapper merges every *.json
+  # in /etc/nimbus/secrets into nimbus's config.
+  - path: /usr/local/bin/nimbus-fetch-secrets
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      umask 077
+      token=$(aws ssm get-parameter --region ${region} --with-decryption --name '${cluster_token_parameter}' --query Parameter.Value --output text)
+      printf '{"cloudApiToken":"%s"}\n' "$token" > /etc/nimbus/secrets/.cloud-token.tmp
+      mv -f /etc/nimbus/secrets/.cloud-token.tmp /etc/nimbus/secrets/cloud-token.json
+
+  # Vault is initialised by an operator after the first apply, so its token
+  # may not exist yet when a node boots. This keeps asking for it; the nimbus
+  # wrapper turns /etc/nimbus/secrets/vault_token into vault.json and reloads.
+  - path: /usr/local/bin/nimbus-vault-token
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      set -uo pipefail
+      umask 077
+      while true; do
+        if value=$(aws ssm get-parameter --region ${region} --with-decryption --name '${vault_token_parameter}' --query Parameter.Value --output text 2>/dev/null); then
+          if ! [ -f /etc/nimbus/secrets/vault_token ] || [ "$(cat /etc/nimbus/secrets/vault_token)" != "$value" ]; then
+            printf '%s' "$value" > /etc/nimbus/secrets/.vault_token.tmp
+            mv -f /etc/nimbus/secrets/.vault_token.tmp /etc/nimbus/secrets/vault_token
+            echo "nimbus vault token updated"
+          fi
+          sleep 300
+        else
+          sleep 30
+        fi
+      done
+
+  - path: /etc/systemd/system/nimbus-vault-token.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Keep the nimbus Vault token current from SSM
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      Restart=always
+      RestartSec=10
+      ExecStart=/usr/local/bin/nimbus-vault-token
+
+      [Install]
+      WantedBy=multi-user.target
+
   - path: /etc/systemd/system/unison-cloud.service
     permissions: "0644"
     content: |
       [Unit]
       Description=Unison Cloud Service
       Requires=docker.service
-      After=docker.service
+      After=docker.service network-online.target
 
       [Service]
       Type=simple
@@ -45,16 +91,18 @@ write_files:
       RestartSec=10
       ExecStartPre=-/usr/bin/docker stop unison-cloud
       ExecStartPre=-/usr/bin/docker rm unison-cloud
+      ExecStartPre=/usr/local/bin/nimbus-fetch-secrets
       ExecStart=/usr/bin/docker run \
         --name unison-cloud \
         --rm \
         -p 8081:8081 \
         -p 8082:8082 \
+        -p 9091:9091 \
         -e NIMBUS_CONFIG_DIR=/etc/nimbus/secrets \
         -e NIMBUS_POLL_IAM_CREDENTIALS=true \
         -e NIMBUS_MAX_CONNECTIONS_PER_HOST=64 \
         -v /etc/nimbus/secrets:/etc/nimbus/secrets \
-        unisoncomputing/unison-cloud:${unison_cloud_image_tag}
+        ${unison_cloud_image}:${unison_cloud_image_tag}
       ExecStop=/usr/bin/docker stop unison-cloud
 
       [Install]

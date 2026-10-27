@@ -16,13 +16,17 @@
           "region": "${region}"
       }
     },
-    "environmentsMount": "environments-staging",
+    "vault": {
+      "host": "${vault_host}",
+      "port": 8200,
+      "scheme": "http"
+    },
+    "environmentsMount": "${environments_mount}",
     "dynamo": {
       "type": "cloud",
       "region": "${region}",
       "table": "${dynamodb_table}"
     },
-    "cloudApiToken": "${cluster_token}",
     "cloudApiInstances": [
       {
         "uri": "https://${cluster_name}.byoc.unison.cloud"

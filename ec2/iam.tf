@@ -22,7 +22,7 @@ resource "aws_iam_role" "unison" {
   }
 }
 
-# IAM policy for S3 access
+# S3: the services and blobs buckets only.
 resource "aws_iam_role_policy" "unison_s3" {
   name = "${var.cluster_name}-unison-s3-policy"
   role = aws_iam_role.unison.id
@@ -49,7 +49,56 @@ resource "aws_iam_role_policy" "unison_s3" {
   })
 }
 
-# IAM policy for CloudWatch logs
+# DynamoDB: the state table only. (The template defined this as a managed
+# policy and never attached it, so its nodes could not reach their table.)
+resource "aws_iam_role_policy" "unison_dynamo" {
+  name = "${var.cluster_name}-unison-dynamo-policy"
+  role = aws_iam_role.unison.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:BatchGetItem",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:ConditionCheckItem",
+          "dynamodb:PutItem",
+          "dynamodb:DescribeTable",
+          "dynamodb:DeleteItem",
+          "dynamodb:GetItem",
+          "dynamodb:Scan",
+          "dynamodb:Query",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = aws_dynamodb_table.unison_cloud_byoc_state.arn
+      }
+    ]
+  })
+}
+
+# SSM: read the cluster token and the Vault token, nothing else.
+resource "aws_iam_role_policy" "unison_ssm_parameters" {
+  name = "${var.cluster_name}-unison-ssm-parameters"
+  role = aws_iam_role.unison.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["ssm:GetParameter"]
+        Resource = [
+          aws_ssm_parameter.cluster_token.arn,
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${local.vault_token_parameter}"
+        ]
+      }
+    ]
+  })
+}
+
+# CloudWatch logs, limited to this cluster's log groups.
 resource "aws_iam_role_policy" "unison_cloudwatch" {
   name = "${var.cluster_name}-unison-cloudwatch-policy"
   role = aws_iam_role.unison.id
@@ -65,10 +114,16 @@ resource "aws_iam_role_policy" "unison_cloudwatch" {
           "logs:PutLogEvents",
           "logs:DescribeLogStreams"
         ]
-        Resource = "*"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/${var.cluster_name}/*"
       }
     ]
   })
+}
+
+# Session Manager in place of SSH.
+resource "aws_iam_role_policy_attachment" "unison_ssm_core" {
+  role       = aws_iam_role.unison.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 # Instance profile for Unison instances

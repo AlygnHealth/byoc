@@ -1,26 +1,40 @@
-output "unison_public_endpoint_https" {
-  value = "https://${aws_lb.main.dns_name}"
-  description = "Public HTTPS endpoint for Unison Cloud API (with self-signed cert)"
+output "cluster_uri" {
+  value       = "https://${var.cluster_domain}"
+  description = "The cluster's URI, as registered with the control plane"
+}
+
+output "load_balancer_dns_name" {
+  value       = aws_lb.main.dns_name
+  description = "Point cluster_domain at this name (a CNAME)"
+}
+
+output "acm_validation_records" {
+  value = [
+    for option in aws_acm_certificate.cluster.domain_validation_options : {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }
+  ]
+  description = "Add these DNS records (DNS only, not proxied) so ACM can issue the certificate; `tofu apply` waits for them"
+}
+
+output "vault_instance_id" {
+  value       = aws_instance.vault.id
+  description = "Run `aws ssm start-session --target <this>`, then `sudo vault-init`, once after the first apply"
 }
 
 resource "local_file" "cluster_config_script" {
   filename = "${path.module}/outputs/cluster-config.u"
-  content = <<EOF
+  content  = <<EOF
 {{
-In order to connect to your cluster, You'll need to use a custom cluster config:
+In order to connect to your cluster, use a client config that names its API host:
 }}
 
 clusterConfig = do
-  certs = """${tls_self_signed_cert.proxy_cert.cert_pem}"""
-                |> toUtf8
-                |> decodeCert
-                |> Exception.reraise
-                |> List.singleton
-  
   hostname = HostName "${var.cluster_name}.byoc.unison.cloud"
-  Cloud.ClientConfig.default() 
+  Cloud.ClientConfig.default()
      |> ClientConfig.host.set hostname
-     |> ClientConfig.httpConfig.modify (client.Config.trustedCerts.modify (c -> c ++ certs))
 
 -- Instead of calling Cloud.run, which, by default, targets the Unison public cluster,
 -- use Cloud.run.withConfig to target your own cluster:
@@ -34,7 +48,7 @@ EOF
 }
 
 output "cluster_config_u" {
-  sensitive = false
+  sensitive   = false
   description = "Unison script to connect to your cluster"
-  value = local_file.cluster_config_script.content
+  value       = local_file.cluster_config_script.content
 }
