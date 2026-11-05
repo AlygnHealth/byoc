@@ -25,7 +25,7 @@
         check = flake-utils.lib.mkApp { drv = packages.check; };
       };
       devShells.eks = pkgs.mkShell {
-        buildInputs = [pkgs.awscli pkgs.opentofu pkgs.kubectl];
+        buildInputs = [pkgs.awscli2 pkgs.ssm-session-manager-plugin pkgs.opentofu pkgs.kubectl];
       };
       formatter = pkgs.alejandra;
       packages = {
