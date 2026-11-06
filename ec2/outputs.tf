@@ -39,7 +39,7 @@ clusterConfig = do
 -- Instead of calling Cloud.run, which, by default, targets the Unison public cluster,
 -- use Cloud.run.withConfig to target your own cluster:
 
-sampleJob = do Cloud.run.withConfig clusterConfig() do
+sampleJob = do Threads.run do Cloud.run.withConfig clusterConfig() do
     env = default()
     two = submit env do
       1 + 1

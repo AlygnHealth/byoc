@@ -150,7 +150,7 @@ resource "aws_autoscaling_group" "unison" {
 
   launch_template {
     id      = aws_launch_template.unison.id
-    version = "$Latest"
+    version = aws_launch_template.unison.latest_version
   }
 
   tag {
