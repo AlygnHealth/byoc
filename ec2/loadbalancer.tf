@@ -72,6 +72,10 @@ resource "aws_lb" "main" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = module.vpc.public_subnets
 
+  # Clients hold a WebSocket open through a job, silent until it answers; the
+  # default of 60 seconds cuts any job that runs longer.
+  idle_timeout = 3600
+
   enable_deletion_protection = true
   drop_invalid_header_fields = true
 
