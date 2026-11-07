@@ -15,6 +15,7 @@ This repository creates:
 - A DynamoDB table for storing unison.cloud data using unison.cloud's `Storage` ability, with point-in-time recovery. [dynamo.tf](dynamo.tf)
 - S3 buckets for storing unison.cloud services, and storing blobs using Unison Cloud's `Blob` storage. [s3.tf](s3.tf)
 - IAM roles and policies for EC2 instances to access AWS services. [iam.tf](iam.tf)
+- Email alerts: a monthly budget and CloudWatch alarms. [alerts.tf](alerts.tf)
 
 This is intended to demonstrate a minimalist deployment of unison.cloud on EC2. It is **not production-ready** but serves testing, development, and demonstration purposes. This provides an easy way to test unison.cloud in your AWS account with EC2 instances.
 
@@ -102,6 +103,24 @@ You can save this output into your scratch file, or load this file into a ucm se
 Each node's container logs go to the CloudWatch log group `/<cluster_name>/nodes`, one stream per instance, kept for `node_log_retention_days`. They outlive the instance. The driver is non-blocking, so a CloudWatch outage drops log lines rather than holding up a node.
 
 `aws logs tail /<cluster_name>/nodes --since 1h --follow` reads them.
+
+### Alerts
+
+[alerts.tf](alerts.tf) emails `alert_email` when:
+
+- spend passes `budget_warning_percent` of `monthly_budget_usd`, then all of it (the whole account's spend)
+- healthy nodes stay below `unison_desired_instances` for ten minutes
+- over 5% of requests answer 5xx for five minutes, once there are 20 requests a minute
+- Vault's instance fails a status check, which also recovers or reboots it
+- DynamoDB throttles requests or reports system errors
+
+`alert_email` has no default, so an apply cannot quietly drop the alerts. In a public repository, set it in a file such as `alerts.auto.tfvars`, which git ignores and `tofu` reads on its own.
+
+AWS sends a confirmation email for the subscription, and alarms stay silent until the link in it is clicked. Budget warnings need no confirmation.
+
+To test the email, set an alarm's state by hand: `aws cloudwatch set-alarm-state --alarm-name <cluster_name>-server-errors --state-value ALARM --state-reason test`. It returns to OK at its next evaluation.
+
+These all watch from inside AWS. Check the service from outside it too, with anything that can read a URL on a schedule and send an email.
 
 ### State
 
