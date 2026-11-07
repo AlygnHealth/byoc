@@ -67,6 +67,7 @@ data "cloudinit_config" "unison-cloudinint" {
       unison_cloud_image      = var.unison_cloud_image
       unison_cloud_image_tag  = var.unison_cloud_image_tag
       region                  = data.aws_region.current.name
+      node_log_group          = aws_cloudwatch_log_group.nodes.name
       cluster_token_parameter = aws_ssm_parameter.cluster_token.name
       vault_token_parameter   = local.vault_token_parameter
       config_template = base64encode(templatefile("${path.module}/config.json.template", {

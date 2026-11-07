@@ -61,7 +61,7 @@ variable "cluster_token_generation" {
 
 variable "unison_cloud_image" {
   type        = string
-  description = "The nimbus container image repository. The published unisoncomputing/unison-cloud images (newest 2025-11-19) are refused by today's control plane; ../nimbus-image builds a current one."
+  description = "The nimbus container image repository. ../nimbus-image builds one if a published release lags the control plane."
   default     = "unisoncomputing/unison-cloud"
 }
 
@@ -69,6 +69,12 @@ variable "unison_cloud_image_tag" {
   type        = string
   description = "Tag/version for the nimbus container image"
   default     = "latest"
+}
+
+variable "node_log_retention_days" {
+  type        = number
+  description = "How long CloudWatch keeps the nodes' logs"
+  default     = 30
 }
 
 variable "environments_mount" {

@@ -67,7 +67,7 @@ The cluster's own DNS name, such as `byoc.example.com`, in a zone you control. T
 
 ##### `unison_cloud_image` and `unison_cloud_image_tag`
 
-The nimbus image. The published `unisoncomputing/unison-cloud` images (the newest is from 2025-11-19) are refused by the current control plane (`key "hostname" not found`, [byoc#2](https://github.com/unisoncomputing/byoc/issues/2)). [`../nimbus-image`](../nimbus-image) builds a current one from the `@unison/nimbus` source; push it to a registry the nodes can pull from and name it here.
+The nimbus image. Images older than `cloud_nimbus_releases_44_4_9_37244` are refused by the current control plane (`key "hostname" not found`, [byoc#2](https://github.com/unisoncomputing/byoc/issues/2)), and `latest` has lagged, so name a release, by digest if you can. [`../nimbus-image`](../nimbus-image) builds a current one from the `@unison/nimbus` source if a release ever falls behind again; push it to a registry the nodes can pull from and name it here.
 
 ### Running Terraform
 
@@ -96,6 +96,31 @@ You can save this output into your scratch file, or load this file into a ucm se
 
 - The node token is made once, by `cluster.tf`, and goes straight into SSM Parameter Store (`/<cluster_name>/nimbus/cluster-token`); it is never in OpenTofu state or the launch template. Change `cluster_token_generation` to make a new one, then refresh the instances.
 - Environment config values live in Vault, on its own encrypted volume, auto-unsealed through KMS.
+
+### Logs
+
+Each node's container logs go to the CloudWatch log group `/<cluster_name>/nodes`, one stream per instance, kept for `node_log_retention_days`. They outlive the instance. The driver is non-blocking, so a CloudWatch outage drops log lines rather than holding up a node.
+
+`aws logs tail /<cluster_name>/nodes --since 1h --follow` reads them.
+
+### State
+
+OpenTofu state is the only record of what this manages, and it is a local file by default. To keep it in S3 instead, encrypted and versioned, with a lock so two applies cannot overlap, once per account:
+
+1. In [`state-backend`](state-backend): `tofu init`, then `tofu apply -var cluster_name=<cluster_name> -var aws_region=<region>`.
+2. Add a backend to [main.tf](main.tf) in place of `local`, with the `bucket` it prints:
+
+   ```hcl
+   backend "s3" {
+     bucket       = "<bucket>"
+     key          = "ec2/terraform.tfstate"
+     region       = "<region>"
+     encrypt      = true
+     use_lockfile = true
+   }
+   ```
+
+3. `tofu init -migrate-state`. Every apply then writes to S3, and the bucket keeps earlier versions, so there is nothing to back up by hand.
 
 ## Tearing down the infrastructure
 

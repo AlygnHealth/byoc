@@ -103,6 +103,12 @@ write_files:
         -e NIMBUS_POLL_IAM_CREDENTIALS=true \
         -e NIMBUS_MAX_CONNECTIONS_PER_HOST=64 \
         -v /etc/nimbus/secrets:/etc/nimbus/secrets \
+        --log-driver awslogs \
+        --log-opt awslogs-region=${region} \
+        --log-opt awslogs-group=${node_log_group} \
+        --log-opt awslogs-stream=%H \
+        --log-opt mode=non-blocking \
+        --log-opt max-buffer-size=4m \
         ${unison_cloud_image}:${unison_cloud_image_tag}
       ExecStop=/usr/bin/docker stop unison-cloud
 
