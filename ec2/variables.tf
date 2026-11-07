@@ -77,6 +77,23 @@ variable "node_log_retention_days" {
   default     = 30
 }
 
+variable "alert_email" {
+  type        = string
+  description = "Where alarms and budget warnings go. Required, so that an apply cannot quietly drop them; keep it out of a public repository with a git-ignored *.auto.tfvars"
+}
+
+variable "monthly_budget_usd" {
+  type        = number
+  description = "Monthly spend, for the whole AWS account, at which the budget's last warning goes out"
+  default     = 250
+}
+
+variable "budget_warning_percent" {
+  type        = number
+  description = "Share of monthly_budget_usd at which the first warning goes out"
+  default     = 60
+}
+
 variable "environments_mount" {
   type        = string
   description = "Vault KV v2 mount that holds environment config values"
