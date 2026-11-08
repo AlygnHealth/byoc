@@ -126,7 +126,7 @@ These all watch from inside AWS. Check the service from outside it too, with any
 
 OpenTofu state is the only record of what this manages, and it is a local file by default. To keep it in S3 instead, encrypted and versioned, with a lock so two applies cannot overlap, once per account:
 
-1. In [`state-backend`](state-backend): `tofu init`, then `tofu apply -var cluster_name=<cluster_name> -var aws_region=<region>`.
+1. `nu state-bucket.nu <cluster_name> <region>` makes the bucket with the AWS CLI ([state-bucket.nu](state-bucket.nu); `--print` shows the calls and runs nothing). It is a script rather than a stack of its own so that the bucket adds no second state to keep. Running it again is safe.
 2. Add a backend to [main.tf](main.tf) in place of `local`, with the `bucket` it prints:
 
    ```hcl
