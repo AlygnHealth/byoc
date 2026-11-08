@@ -48,16 +48,68 @@ variable "instance_type" {
   default     = "t3.medium"
 }
 
+variable "cluster_domain" {
+  type        = string
+  description = "The cluster's own DNS name (for example byoc.example.com): the load balancer's ACM certificate is issued for it, and it is registered as the cluster's URI. Point it at the load balancer (`tofu output load_balancer_dns_name`)."
+}
+
 variable "cluster_token_generation" {
   type        = number
   description = "Change to make a new node token (cluster.tf); follow it with an instance refresh."
   default     = 1
 }
 
+variable "unison_cloud_image" {
+  type        = string
+  description = "The nimbus container image repository. ../nimbus-image builds one if a published release lags the control plane."
+  default     = "unisoncomputing/unison-cloud"
+}
+
 variable "unison_cloud_image_tag" {
   type        = string
-  description = "Tag/version for the unisoncomputing/unison-cloud container image"
+  description = "Tag/version for the nimbus container image"
   default     = "latest"
+}
+
+variable "node_log_retention_days" {
+  type        = number
+  description = "How long CloudWatch keeps the nodes' logs"
+  default     = 30
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Where alarms and budget warnings go. Required, so that an apply cannot quietly drop them; keep it out of a public repository with a git-ignored *.auto.tfvars"
+}
+
+variable "monthly_budget_usd" {
+  type        = number
+  description = "Monthly spend, for the whole AWS account, at which the budget's last warning goes out"
+  default     = 250
+}
+
+variable "budget_warning_percent" {
+  type        = number
+  description = "Share of monthly_budget_usd at which the first warning goes out"
+  default     = 60
+}
+
+variable "environments_mount" {
+  type        = string
+  description = "Vault KV v2 mount that holds environment config values"
+  default     = "environments"
+}
+
+variable "vault_image" {
+  type        = string
+  description = "Vault container image, pinned"
+  default     = "hashicorp/vault:2.1.2"
+}
+
+variable "vault_instance_type" {
+  type        = string
+  description = "EC2 instance type for Vault"
+  default     = "t3.small"
 }
 
 variable "unison_instance_type" {

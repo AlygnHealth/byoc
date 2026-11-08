@@ -16,7 +16,12 @@
           "region": "${region}"
       }
     },
-    "environmentsMount": "environments-staging",
+    "vault": {
+      "host": "${vault_host}",
+      "port": 8200,
+      "scheme": "http"
+    },
+    "environmentsMount": "${environments_mount}",
     "dynamo": {
       "type": "cloud",
       "region": "${region}",

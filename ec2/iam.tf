@@ -78,7 +78,7 @@ resource "aws_iam_role_policy" "unison_dynamo" {
   })
 }
 
-# SSM: read the cluster token, nothing else.
+# SSM: read the cluster token and the Vault token, nothing else.
 resource "aws_iam_role_policy" "unison_ssm_parameters" {
   name = "${var.cluster_name}-unison-ssm-parameters"
   role = aws_iam_role.unison.id
@@ -87,9 +87,12 @@ resource "aws_iam_role_policy" "unison_ssm_parameters" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["ssm:GetParameter"]
-        Resource = [aws_ssm_parameter.cluster_token.arn]
+        Effect = "Allow"
+        Action = ["ssm:GetParameter"]
+        Resource = [
+          aws_ssm_parameter.cluster_token.arn,
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${local.vault_token_parameter}"
+        ]
       }
     ]
   })

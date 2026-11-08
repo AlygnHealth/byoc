@@ -1,0 +1,124 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - docker
+
+write_files:
+  - path: /etc/vault/vault.hcl
+    permissions: "0644"
+    content: |
+      ui            = false
+      disable_mlock = true
+
+      storage "file" {
+        path = "/vault/data"
+      }
+
+      # Plain HTTP inside the VPC: only the nodes' security group can reach
+      # this port. TLS here is a follow-up.
+      listener "tcp" {
+        address     = "0.0.0.0:8200"
+        tls_disable = true
+      }
+
+      seal "awskms" {
+        region     = "${region}"
+        kms_key_id = "${kms_key_id}"
+      }
+
+      api_addr = "http://127.0.0.1:8200"
+
+      # nimbus never renews its token, so it is made with a long TTL
+      # (vault-init); this lets a token live that long.
+      max_lease_ttl = "87600h"
+
+  # Run once, from a Session Manager shell on this instance, after the first
+  # apply: `sudo vault-init`. It prints the recovery key and the root token
+  # (keep both in a password manager; they are shown only this once), then
+  # sets up what nimbus needs and stores nimbus's token in SSM, where the
+  # nodes pick it up within a minute.
+  - path: /usr/local/bin/vault-init
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      vault() { docker exec -i -e VAULT_TOKEN="$${VAULT_TOKEN:-}" vault vault "$@"; }
+      if vault status -format=json | grep -q '"initialized": true'; then
+        echo "Vault is already initialised; nothing to do."
+        exit 0
+      fi
+      init=$(vault operator init -recovery-shares=1 -recovery-threshold=1 -format=json)
+      recovery=$(printf '%s' "$init" | python3 -c 'import json,sys; print(json.load(sys.stdin)["recovery_keys_b64"][0])')
+      VAULT_TOKEN=$(printf '%s' "$init" | python3 -c 'import json,sys; print(json.load(sys.stdin)["root_token"])')
+      export VAULT_TOKEN
+      echo
+      echo "Recovery key: $recovery"
+      echo "Root token:   $VAULT_TOKEN"
+      echo "Store both now; they are not shown again."
+      echo
+      for _ in $(seq 1 30); do vault status > /dev/null 2>&1 && break; sleep 2; done
+      vault secrets enable -path='${environments_mount}' kv-v2
+      printf '%s\n' \
+        'path "${environments_mount}/data/*"     { capabilities = ["create", "read", "update", "patch", "delete"] }' \
+        'path "${environments_mount}/metadata/*" { capabilities = ["read", "list", "delete"] }' \
+        'path "${environments_mount}/delete/*"   { capabilities = ["update"] }' \
+        | vault policy write nimbus -
+      vault token create -orphan -no-default-policy -policy=nimbus -ttl=87600h -explicit-max-ttl=87600h -field=token \
+        | aws ssm put-parameter --region ${region} --name '${vault_token_parameter}' --type SecureString --overwrite --value file:///dev/stdin > /dev/null
+      echo "nimbus's token is in ${vault_token_parameter}; the nodes will pick it up."
+
+  # The data volume is attached after boot; wait for it, format it the first
+  # time only, and mount it.
+  - path: /usr/local/bin/vault-mount-data
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      device=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${volume_id}
+      for _ in $(seq 1 120); do [ -e "$device" ] && break; sleep 5; done
+      [ -e "$device" ] || { echo "data volume never appeared"; exit 1; }
+      blkid "$device" > /dev/null || mkfs.xfs "$device"
+      mkdir -p /opt/vault/data
+      mountpoint -q /opt/vault/data || mount "$device" /opt/vault/data
+      grep -q /opt/vault/data /etc/fstab || echo "$device /opt/vault/data xfs defaults,nofail 0 2" >> /etc/fstab
+      # The image runs Vault as uid 100.
+      chown -R 100:1000 /opt/vault/data
+
+  - path: /etc/systemd/system/vault.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Vault
+      Requires=docker.service
+      After=docker.service
+
+      [Service]
+      Type=simple
+      Restart=always
+      RestartSec=10
+      ExecStartPre=/usr/local/bin/vault-mount-data
+      ExecStartPre=-/usr/bin/docker stop vault
+      ExecStartPre=-/usr/bin/docker rm vault
+      # The image's entrypoint turns `server` into
+      # `vault server -config=/vault/config`, which reads vault.hcl.
+      ExecStart=/usr/bin/docker run \
+        --name vault \
+        --rm \
+        --cap-add IPC_LOCK \
+        -p 8200:8200 \
+        -e VAULT_ADDR=http://127.0.0.1:8200 \
+        -v /etc/vault:/vault/config:ro \
+        -v /opt/vault/data:/vault/data \
+        ${vault_image} server
+      ExecStop=/usr/bin/docker stop vault
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl start docker
+  - systemctl enable docker
+  - systemctl daemon-reload
+  - systemctl enable --now vault
