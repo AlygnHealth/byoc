@@ -1,4 +1,4 @@
-# S3 bucket for Unison Cloud native services
+# S3 bucket for Unison Cloud native services (deployed code)
 resource "aws_s3_bucket" "unison_cloud_byoc_native_services" {
   bucket_prefix = "unison-cloud-byoc-services"
   force_destroy = true
@@ -40,69 +40,48 @@ resource "aws_s3_bucket_public_access_block" "unison_cloud_byoc_blobs" {
   restrict_public_buckets = true
 }
 
-# IAM policy for EC2 instances to access S3 buckets
-resource "aws_iam_policy" "byoc_container_s3_policy" {
-  name_prefix = "byoc-container-s3-"
-  path        = "/"
-  description = "IAM policy for BYOC containers to access S3 buckets"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          aws_s3_bucket.unison_cloud_byoc_native_services.arn,
-          "${aws_s3_bucket.unison_cloud_byoc_native_services.arn}/*",
-          aws_s3_bucket.unison_cloud_byoc_blobs.arn,
-          "${aws_s3_bucket.unison_cloud_byoc_blobs.arn}/*"
-        ]
-      }
-    ]
-  })
-
-  tags = {
-    Environment = "byoc"
-    Project     = "unison-cloud"
+# The node policies in iam.tf grant these buckets; the template also defined
+# unattached managed policies for S3 and DynamoDB here, which granted nothing.
+locals {
+  data_buckets = {
+    services = aws_s3_bucket.unison_cloud_byoc_native_services.id
+    blobs    = aws_s3_bucket.unison_cloud_byoc_blobs.id
   }
 }
 
-# IAM policy for EC2 instances to access DynamoDB
-resource "aws_iam_policy" "byoc_container_dynamo_policy" {
-  name_prefix = "byoc-container-dynamo-"
-  path        = "/"
-  description = "IAM policy for BYOC containers to access DynamoDB"
+# Both buckets encrypted at rest.
+resource "aws_s3_bucket_server_side_encryption_configuration" "data" {
+  for_each = local.data_buckets
+  bucket   = each.value
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Refuse any request that is not over TLS.
+resource "aws_s3_bucket_policy" "tls_only" {
+  for_each = local.data_buckets
+  bucket   = each.value
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = [
-          "dynamodb:BatchGetItem",
-          "dynamodb:BatchWriteItem",
-          "dynamodb:ConditionCheckItem",
-          "dynamodb:PutItem",
-          "dynamodb:DescribeTable",
-          "dynamodb:DeleteItem",
-          "dynamodb:GetItem",
-          "dynamodb:Scan",
-          "dynamodb:Query",
-          "dynamodb:UpdateItem"
-        ]
-        Resource = aws_dynamodb_table.unison_cloud_byoc_state.arn
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource  = ["arn:aws:s3:::${each.value}", "arn:aws:s3:::${each.value}/*"]
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
       }
     ]
   })
 
-  tags = {
-    Environment = "byoc"
-    Project     = "unison-cloud"
-  }
+  depends_on = [
+    aws_s3_bucket_public_access_block.unison_cloud_byoc_native_services,
+    aws_s3_bucket_public_access_block.unison_cloud_byoc_blobs,
+  ]
 }

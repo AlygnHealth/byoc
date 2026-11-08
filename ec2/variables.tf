@@ -48,6 +48,12 @@ variable "instance_type" {
   default     = "t3.medium"
 }
 
+variable "cluster_token_generation" {
+  type        = number
+  description = "Change to make a new node token (cluster.tf); follow it with an instance refresh."
+  default     = 1
+}
+
 variable "unison_cloud_image_tag" {
   type        = string
   description = "Tag/version for the unisoncomputing/unison-cloud container image"

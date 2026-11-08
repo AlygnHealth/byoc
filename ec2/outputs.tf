@@ -1,11 +1,11 @@
 output "unison_public_endpoint_https" {
-  value = "https://${aws_lb.main.dns_name}"
+  value       = "https://${aws_lb.main.dns_name}"
   description = "Public HTTPS endpoint for Unison Cloud API (with self-signed cert)"
 }
 
 resource "local_file" "cluster_config_script" {
   filename = "${path.module}/outputs/cluster-config.u"
-  content = <<EOF
+  content  = <<EOF
 {{
 In order to connect to your cluster, You'll need to use a custom cluster config:
 }}
@@ -25,7 +25,9 @@ clusterConfig = do
 -- Instead of calling Cloud.run, which, by default, targets the Unison public cluster,
 -- use Cloud.run.withConfig to target your own cluster:
 
-sampleJob = do Cloud.run.withConfig clusterConfig() do
+-- Cloud.run.withConfig needs Threads, which UCM's `run` does not provide,
+-- so the job runs under Threads.run.
+sampleJob = do Threads.run do Cloud.run.withConfig clusterConfig() do
     env = default()
     two = submit env do
       1 + 1
@@ -34,7 +36,7 @@ EOF
 }
 
 output "cluster_config_u" {
-  sensitive = false
+  sensitive   = false
   description = "Unison script to connect to your cluster"
-  value = local_file.cluster_config_script.content
+  value       = local_file.cluster_config_script.content
 }

@@ -11,8 +11,6 @@ This repository creates:
 - An AWS VPC with public and private subnets. [vpc.tf](vpc.tf)
 - EC2 instances in an Auto Scaling Group running the unison.cloud application. [unison.tf](unison.tf)
 - An Application Load Balancer for routing traffic to unison.cloud instances. [loadbalancer.tf](loadbalancer.tf)
-- A bastion host for secure SSH access to the instances. [bastion.tf](bastion.tf)
-- Proxy instances for additional routing capabilities. [proxy.tf](proxy.tf)
 - A DynamoDB table for storing unison.cloud data using unison.cloud's `Storage` ability. [dynamo.tf](dynamo.tf)
 - S3 buckets for storing unison.cloud services, and storing blobs using Unison Cloud's `Blob` storage. [s3.tf](s3.tf)
 - IAM roles and policies for EC2 instances to access AWS services. [iam.tf](iam.tf)
@@ -62,9 +60,13 @@ You can find a complete list of zones and regions in the [AWS documentation](htt
 
 The name of the cluster, which should match the name you used to create a `Cluster.Id`. This will be used to name the EC2 instances and the DynamoDB table. It must be a valid DNS subdomain, meaning it must consist of only lowercase letters, numbers, and hyphens, and must start and end with a letter or number.
 
+##### `unison_cloud_image_tag`
+
+Images older than `cloud_nimbus_releases_44_4_9_37244` are refused by the current control plane (`key "hostname" not found`, [byoc#2](https://github.com/unisoncomputing/byoc/issues/2)), and `latest` has lagged behind, so name a release.
+
 ### Running Terraform
 
-Once you have created the `terraform.tfvars` file, you can run OpenTofu to create the infrastructure:
+Once you have created the `terraform.tfvars` file, run `auth.login` in UCM (the apply registers the cluster with your Unison credentials), then:
 
 ```bash
 $ tofu init
@@ -72,12 +74,18 @@ $ tofu apply
 ```
 
 `tofu init` will inspect the configuration and download any necessary terraform modules.
-`tofu apply` will create all the needed resources in your AWS account, this might take 15-20 minutes. The script will output important information including the load balancer DNS name and bastion host IP.
+`tofu apply` will create all the needed resources in your AWS account, this might take 15-20 minutes. It prints the load balancer's DNS name, which is registered as the cluster's URI.
+
+The nodes have no SSH: reach one with `aws ssm start-session --target <instance id>`, which needs the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) (in the flake's `eks` shell).
 
 ### Using the cluster
-The script will generate a `outputs/cluster_config.u` file that that contains a `ClientConfig` which you can use to deploy services and run jobs against your cluster. 
+The apply writes `outputs/cluster-config.u`, with a `ClientConfig` you can use to deploy services and run jobs against your cluster.
 
-You can save this output into your scratch file, or load this file into a ucm session with `> load /path/to/outputs/cluster_config.u`. and then you should be able to `> run sampleJob` which will attempt to launch a job on your cluster.
+You can save this output into your scratch file, or load this file into a ucm session with `> load /path/to/outputs/cluster-config.u`, and then you should be able to `> run sampleJob`, which will attempt to launch a job on your cluster.
+
+### The node token
+
+The node token is made once, by `cluster.tf`, and goes straight into SSM Parameter Store (`/<cluster_name>/nimbus/cluster-token`); it is never in OpenTofu state or the launch template. Change `cluster_token_generation` to make a new one, then refresh the instances.
 
 ## Tearing down the infrastructure
 

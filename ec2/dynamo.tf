@@ -1,12 +1,27 @@
 # DynamoDB table for storing Unison Cloud state
+#
+# The key schema is nimbus's: a binary hash key `K` and a string range key
+# `NS`, as the Docker Compose setup creates its local table. (The template's
+# single string key `id` is not one nimbus can use.)
 resource "aws_dynamodb_table" "unison_cloud_byoc_state" {
-  name           = local.dynamodb_table_name
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "id"
+  name         = local.dynamodb_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "K"
+  range_key    = "NS"
 
   attribute {
-    name = "id"
+    name = "K"
+    type = "B"
+  }
+
+  attribute {
+    name = "NS"
     type = "S"
+  }
+
+  # Encrypted at rest with a KMS key, not only the default AWS-owned key.
+  server_side_encryption {
+    enabled = true
   }
 
   tags = {

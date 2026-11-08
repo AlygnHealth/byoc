@@ -1,4 +1,4 @@
-aws_region = "us-west-2"
+aws_region             = "us-west-2"
 aws_availability_zones = ["us-west-2a", "us-west-2b"]
 
 # You must change the cluster_name before deploying. 

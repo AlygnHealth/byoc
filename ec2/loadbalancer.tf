@@ -54,18 +54,23 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # The load balancer only ever talks to the nodes.
   egress {
-    description = "All outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "To the nodes"
+    from_port   = 8081
+    to_port     = 8082
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = {
     Name        = "${var.cluster_name}-alb-sg"
     Environment = "byoc"
     Project     = "unison-cloud"
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -77,7 +82,13 @@ resource "aws_lb" "main" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = module.vpc.public_subnets
 
+  # Clients hold a WebSocket open through a job, silent until it answers; the
+  # default of 60 seconds cuts any job that runs longer.
+  idle_timeout = 3600
+
   enable_deletion_protection = false
+  # Requests with malformed headers are dropped rather than passed on.
+  drop_invalid_header_fields = true
 
   tags = {
     Name        = "${var.cluster_name}-alb"
@@ -130,12 +141,12 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# ALB Listener for HTTPS
+# ALB Listener for HTTPS: TLS 1.2 and 1.3 only, with current ciphers.
 resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.main.arn
   port              = "443"
   protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = aws_acm_certificate.proxy.arn
 
   default_action {
