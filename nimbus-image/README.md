@@ -12,7 +12,7 @@ With `ucm` 1.5.0, `gh`, `docker` and `nu`, and `@unison/nimbus/main` in your cod
 nu build.nu --tag ghcr.io/<you>/nimbus-share:<date>
 ```
 
-`--skip-docker` stops before `docker build`.
+`--skip-docker` stops before `docker build`. `--branch <project/branch>` compiles another branch than `@unison/nimbus/main`, such as `@unison/nimbus/cloudwatch-logs`, which adds the CloudWatch log reader that `logs_from_cloudwatch` in `ec2/` needs.
 
 ## Check it
 

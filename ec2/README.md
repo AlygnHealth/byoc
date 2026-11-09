@@ -104,6 +104,8 @@ Each node's container logs go to the CloudWatch log group `/<cluster_name>/nodes
 
 `aws logs tail /<cluster_name>/nodes --since 1h --follow` reads them.
 
+With `logs_from_cloudwatch = true`, nimbus also answers log requests from that group: a job's logs streamed to the client that submitted it, and a deployment's or service's logs. Without it, the cluster answers every log request with `400 This Unison Cloud instance is not configured to support log requests`, and the Unison Cloud client prints `error fetching logs` for each job it submits (set `UNISON_CLOUD_SUBMIT_DISABLE_LOG_STREAMING=1` to stop it asking). It needs a nimbus image that reads a `cloudwatch` log provider; an older one cannot read the config at all, so set it in the same apply that moves `unison_cloud_image_tag` to such an image. Nimbus reads with the node's instance role (`logs:FilterLogEvents`), which is not billed by data scanned the way a Logs Insights query is. CloudWatch throttles it at a few requests a second per account and region, and a throttled poll answers with what it has found so far.
+
 ### Alerts
 
 [alerts.tf](alerts.tf) emails `alert_email` when:

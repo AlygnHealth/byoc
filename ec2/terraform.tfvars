@@ -22,6 +22,10 @@ cluster_domain = "byoc.alygnhealth.com"
 # supplies. ../nimbus-image builds our own if a release ever lags again.
 unison_cloud_image     = "unisoncomputing/unison-cloud"
 unison_cloud_image_tag = "cloud_nimbus_releases_44_4_9_37244@sha256:1ab843e890c090d371099c1a9a08a3ecfa3216fb6e2e7eb3330c92d4a2056370"
+# Needs an image that reads a cloudwatch log provider (../nimbus-image, built with
+# --branch @unison/nimbus/cloudwatch-logs until that is on main); switch it on in
+# the same apply as that image.
+# logs_from_cloudwatch = true
 # vault_instance_type = "t3.small"
 # unison_instance_type = "t3.medium"
 # unison_min_instances = 1

@@ -27,6 +27,15 @@
       "region": "${region}",
       "table": "${dynamodb_table}"
     },
+%{ if logs_from_cloudwatch ~}
+    "logs": {
+      "provider": {
+        "type": "cloudwatch",
+        "region": "${region}",
+        "logGroup": "${node_log_group}"
+      }
+    },
+%{ endif ~}
     "cloudApiInstances": [
       {
         "uri": "https://${cluster_name}.byoc.unison.cloud"

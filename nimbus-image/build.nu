@@ -1,18 +1,21 @@
 #!/usr/bin/env nu
 # Builds a nimbus image from the @unison/nimbus source in the local codebase.
 # See Dockerfile for why. Needs ucm (the same version as UCM_VERSION), gh and
-# docker; @unison/nimbus/main must already be in the codebase (`clone` or
-# `pull` it in UCM first).
+# docker; the branch must already be in the codebase (`clone` or `pull`
+# @unison/nimbus/main in UCM first).
 #
 #   nu build.nu                # compile, fetch UCM, docker build
 #   nu build.nu --skip-docker  # everything but the docker build
 #   nu build.nu --tag <name>   # image name (default nimbus-share:<date>)
+#   nu build.nu --branch <project/branch>  # another branch than main, such as
+#                              # one with a change not yet on Share
 
 const UCM_VERSION = "1.5.0"
 const UCM_ASSET = "ucm-linux-x64.tar.gz"
-const NIMBUS_BRANCH = "@unison/nimbus/main"
+const DEFAULT_BRANCH = "@unison/nimbus/main"
 
-def main [--skip-docker, --tag: string] {
+def main [--skip-docker, --tag: string, --branch: string] {
+  let nimbus_branch = $branch | default $DEFAULT_BRANCH
   let here = $env.FILE_PWD
   let work = $here | path join "work"
   mkdir $work
@@ -22,12 +25,12 @@ def main [--skip-docker, --tag: string] {
     error make {msg: $"ucm is ($ucm_version); this build expects release/($UCM_VERSION), the UCM baked into the image"}
   }
 
-  print $"Compiling main.nodeMain from ($NIMBUS_BRANCH)..."
+  print $"Compiling main.nodeMain from ($nimbus_branch)..."
   let uc_base = $work | path join "nodeMain"
   let transcript = $work | path join "compile.md"
   let compile_lines = [
     "```ucm"
-    $"($NIMBUS_BRANCH)> compile main.nodeMain ($uc_base)"
+    $"($nimbus_branch)> compile main.nodeMain ($uc_base)"
     "```"
   ]
   $compile_lines | str join "\n" | save --force $transcript
@@ -45,7 +48,7 @@ def main [--skip-docker, --tag: string] {
   cp ($unpacked | path join "unison" "unison") ($here | path join "unison")
 
   let date = (date now | format date "%Y-%m-%d")
-  $"share-main-($date) ucm-($UCM_VERSION)\n" | save --force ($here | path join "version.txt")
+  $"($nimbus_branch | split row '/' | last)-($date) ucm-($UCM_VERSION)\n" | save --force ($here | path join "version.txt")
 
   let image = $tag | default $"nimbus-share:($date)"
   if $skip_docker {

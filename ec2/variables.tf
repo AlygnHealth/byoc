@@ -77,6 +77,12 @@ variable "node_log_retention_days" {
   default     = 30
 }
 
+variable "logs_from_cloudwatch" {
+  type        = bool
+  description = "Whether nimbus answers log requests from the nodes' CloudWatch log group. Needs a nimbus image that reads a cloudwatch log provider; an older one refuses the config."
+  default     = false
+}
+
 variable "alert_email" {
   type        = string
   description = "Where alarms and budget warnings go. Required, so that an apply cannot quietly drop them; keep it out of a public repository with a git-ignored *.auto.tfvars"

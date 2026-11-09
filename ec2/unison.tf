@@ -78,6 +78,8 @@ data "cloudinit_config" "unison-cloudinint" {
         cluster_name         = var.cluster_name
         vault_host           = local.vault_private_ip
         environments_mount   = var.environments_mount
+        node_log_group       = aws_cloudwatch_log_group.nodes.name
+        logs_from_cloudwatch = var.logs_from_cloudwatch
       }))
     })
   }
