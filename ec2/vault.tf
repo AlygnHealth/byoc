@@ -174,6 +174,13 @@ resource "aws_instance" "vault" {
     Environment = "byoc"
     Project     = "unison-cloud"
   }
+
+  # A newer Amazon Linux image would otherwise replace Vault on any apply, taking
+  # secrets away from the nodes while it restarts. Move Vault to a new image on
+  # purpose, with `tofu apply -replace=aws_instance.vault`.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
 
 resource "aws_volume_attachment" "vault_data" {
