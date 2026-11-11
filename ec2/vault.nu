@@ -421,7 +421,15 @@ def ask [question: string] { (input $"($question) [y/N] " | str downcase) in ["y
 # not yet done and starts there, so it is safe to run again after a stop.
 def "main setup" [] {
     print "1/5 reserve Vault's addresses, and move the server into vault_servers"
-    if "vault_address" in ((outputs) | columns) { print "  done" } else {
+    # Done when nothing is left to apply, so an apply cut off by an error is
+    # finished on the next run. The block is checked only before it is reserved.
+    let pending = (^tofu plan -input=false -detailed-exitcode | complete)
+    if $pending.exit_code == 1 { error make {msg: $"tofu plan failed: ($pending.stderr | str trim)"} }
+    if $pending.exit_code == 0 { print "  done" } else if "vault_address" in ((outputs) | columns) {
+        print "  The block is reserved; the plan still has changes, from an apply that stopped or from something else pending."
+        if not (ask "  Run `tofu apply` now?") { return }
+        try { ^tofu apply } catch { error make {msg: "tofu apply did not apply; run setup again once it has"} }
+    } else {
         let region = (^aws configure get region | str trim)
         let block = (seq 96 111 | each {|host| $"10.0.30.($host)" } | str join ",")
         let taken = (aws-json ec2 describe-network-interfaces --region $region --filters $"Name=addresses.private-ip-address,Values=($block)" | get NetworkInterfaces)
