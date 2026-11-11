@@ -91,16 +91,43 @@ storage_destination \"raft\" {
 }
 cluster_addr = \"http://($ip):8201\"
 HCL
+# Until the Raft configuration is written, a failure starts Vault again on
+# the file storage it still has.
+trap 'systemctl start vault' ERR
 systemctl stop vault
 mkdir -p /opt/vault/data/raft
 # A copy cut off earlier left part of the Raft data; the file data is the source.
 find /opt/vault/data/raft -mindepth 1 -delete
+# The image runs Vault as its own user, which must own the new folder.
+chown -R 100:1000 /opt/vault/data
 docker run --rm --entrypoint vault -v /etc/vault:/vault/config:ro -v /opt/vault/data:/vault/data \"$image\" operator migrate -config=/vault/config/migrate.hcl
 chown -R 100:1000 /opt/vault/data
+trap - ERR
 cat > /etc/vault/vault.hcl <<'HCL'
 ($next)
 HCL
 systemctl start vault"
+}
+
+# Installs `vault-operator-token` on a server (one started by `update` has it
+# from cloud-init): it asks for the root token and stores a token that may only
+# manage Raft and step down in SSM.
+def operator-token-script [region: string, parameter: string] {
+    $"set -euo pipefail
+cat > /usr/local/bin/vault-operator-token <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+read -rsp 'Root token: ' VAULT_TOKEN; echo
+export VAULT_TOKEN
+printf '%s\\n' \\
+  'path \"sys/storage/raft/*\" { capabilities = [\"create\", \"read\", \"update\", \"delete\", \"list\", \"sudo\"] }' \\
+  'path \"sys/step-down\"      { capabilities = [\"update\", \"sudo\"] }' \\
+  | docker exec -i -e VAULT_TOKEN vault vault policy write raft-operator -
+docker exec -e VAULT_TOKEN vault vault token create -orphan -no-default-policy -policy=raft-operator -ttl=87600h -explicit-max-ttl=87600h -field=token \\
+  | aws ssm put-parameter --region ($region) --name '($parameter)' --type SecureString --overwrite --value file:///dev/stdin > /dev/null
+echo 'The operator token is stored.'
+SCRIPT
+chmod 0700 /usr/local/bin/vault-operator-token"
 }
 
 # Puts the address on, or takes it off, the interface that holds `own_ip`.
@@ -410,12 +437,12 @@ def "main update" [] {
     print "Anything else worth a look goes here (a page that reads a secret, say); after this, the snapshot is the way back."
     mut answer = ""
     while $answer not-in ["y" "n"] {
-        $answer = (input $"Remove ($old.name) \(y\), or go back to it \(n\)? " | str trim | str downcase | str substring 0..0)
+        $answer = (input $"Remove ($old.name) \(y\), or go back to it \(n\)? " | str trim | str substring 0..0 | str replace "Y" "y" | str replace "N" "n")
     }
     if $answer == "y" { main finish } else { main abort }
 }
 
-def ask [question: string] { (input $"($question) [y/N] " | str downcase) in ["y" "yes"] }
+def ask [question: string] { (input $"($question) [y/N] " | str trim) in ["y" "Y" "yes" "Yes" "YES"] }
 
 # Every step before the first update, in order. Each run finds the first step
 # not yet done and starts there, so it is safe to run again after a stop.
@@ -452,22 +479,18 @@ def "main setup" [] {
     print "3/5 the operator token"
     let has_token = {|| aws-json ssm describe-parameters --region $out.aws_region --parameter-filters $"Key=Name,Values=($out.vault_operator_token_parameter)" | get Parameters | is-not-empty }
     if (do $has_token) { print "  done" } else {
-        print $"  In another terminal, from ec2/: aws ssm start-session --target ($server.id)
-  Then, with the root token from the password manager \(typed, never echoed\):
-
-    sudo -i
-    read -rsp 'Root token: ' VAULT_TOKEN; echo; export VAULT_TOKEN
-    printf '%s\\n' \\
-      'path "sys/storage/raft/*" { capabilities = ["create", "read", "update", "delete", "list", "sudo"] }' \\
-      'path "sys/step-down"      { capabilities = ["update", "sudo"] }' \\
-      | docker exec -i -e VAULT_TOKEN vault vault policy write raft-operator -
-    docker exec -e VAULT_TOKEN vault vault token create -orphan -no-default-policy -policy=raft-operator \\
-      -ttl=87600h -explicit-max-ttl=87600h -field=token \\
-      | aws ssm put-parameter --region ($out.aws_region) --name ($out.vault_operator_token_parameter) \\
-        --type SecureString --overwrite --value file:///dev/stdin > /dev/null
-    exit
-"
-        input "  Press Enter once it is stored. "
+        # The root token is typed into a session on the server and goes nowhere
+        # else: a command sent through SSM would keep it in the command's record.
+        remote $server.id (operator-token-script $out.aws_region $out.vault_operator_token_parameter) | ignore
+        print "  A session on the server opens here and asks for the root token from the password manager (typed, never echoed)."
+        # Run attached to this terminal, so nothing of it is captured.
+        try { ^aws ssm start-session --region $out.aws_region --target $server.id --document-name AWS-StartInteractiveCommand --parameters '{"command":["sudo /usr/local/bin/vault-operator-token"]}' } catch { print "  The session ended with an error." }
+        if not (do $has_token) {
+            print $"  The session did not store it. By hand, in another terminal:
+    aws ssm start-session --target ($server.id)
+    sudo vault-operator-token"
+            input "  Press Enter once it is stored. "
+        }
         if not (do $has_token) { error make {msg: $"($out.vault_operator_token_parameter) is still missing; run setup again once it is stored"} }
         if (leader-on $server.id) != $server.name { error make {msg: "the operator token does not read the cluster; check it was made on this server"} }
         print "  done"
@@ -533,6 +556,9 @@ max_lease_ttl = "87600h"'
     assert ($migrate | str contains 'node_id = "blue"')
     assert ($migrate | str contains 'cluster_addr = "http://10.0.30.10:8201"')
     assert ((^bash -n -c $migrate | complete).exit_code == 0) "the migrate script parses"
+    let token_script = (operator-token-script "us-west-2" "/c/vault/operator-token")
+    assert ((^bash -n -c $token_script | complete).exit_code == 0) "the operator token script parses"
+    assert ($token_script | str contains "printf '%s\\n' \\\n") "its printf keeps the newline escape and the continuation"
     let add = (address-script "10.0.30.97" "10.0.30.100/25" "replace")
     assert ($add | str contains "/^10.0.30.97\\//")
     assert ($add | str contains 'ip addr replace 10.0.30.100/25 dev "$dev"')
