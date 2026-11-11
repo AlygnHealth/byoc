@@ -12,8 +12,12 @@ write_files:
       ui            = false
       disable_mlock = true
 
-      storage "file" {
-        path = "/vault/data"
+      # Raft, so a second server can take over during an update (vault.nu).
+      # The first server's data was migrated here from `storage "file"`,
+      # whose files stay beside it in /vault/data.
+      storage "raft" {
+        path    = "/vault/data/raft"
+        node_id = "${node_id}"
       }
 
       # Plain HTTP inside the VPC: only the nodes' security group can reach
@@ -28,17 +32,23 @@ write_files:
         kms_key_id = "${kms_key_id}"
       }
 
-      api_addr = "http://127.0.0.1:8200"
+      # This server's own address, for a joining server and for a standby
+      # sending a client to the leader; the nodes use the movable one.
+      api_addr     = "http://${server_ip}:8200"
+      cluster_addr = "http://${server_ip}:8201"
 
       # nimbus never renews its token, so it is made with a long TTL
       # (vault-init); this lets a token live that long.
       max_lease_ttl = "87600h"
 
-  # Run once, from a Session Manager shell on this instance, after the first
-  # apply: `sudo vault-init`. It prints the recovery key and the root token
-  # (keep both in a password manager; they are shown only this once), then
-  # sets up what nimbus needs and stores nimbus's token in SSM, where the
-  # nodes pick it up within a minute.
+  # Run once ever, on the cluster's first server, from a Session Manager
+  # shell after the first apply: `sudo vault-init --new-cluster`. It prints the
+  # recovery key and the root token (keep both in a password manager; they are
+  # shown only this once), then sets up what nimbus needs and stores nimbus's
+  # token in SSM, where the nodes pick it up within a minute. A server started
+  # by `vault.nu update` is uninitialised until it joins the cluster, and
+  # initialising it would start a second, empty one, so without the flag this
+  # refuses.
   - path: /usr/local/bin/vault-init
     permissions: "0700"
     content: |
@@ -48,6 +58,11 @@ write_files:
       if vault status -format=json | grep -q '"initialized": true'; then
         echo "Vault is already initialised; nothing to do."
         exit 0
+      fi
+      if [ "$${1:-}" != "--new-cluster" ]; then
+        echo "This server is not initialised. If it was started to join the cluster, vault.nu joins it."
+        echo "Only for the first server of a new cluster: sudo vault-init --new-cluster"
+        exit 1
       fi
       init=$(vault operator init -recovery-shares=1 -recovery-threshold=1 -format=json)
       recovery=$(printf '%s' "$init" | python3 -c 'import json,sys; print(json.load(sys.stdin)["recovery_keys_b64"][0])')
@@ -69,6 +84,27 @@ write_files:
         | aws ssm put-parameter --region ${region} --name '${vault_token_parameter}' --type SecureString --overwrite --value file:///dev/stdin > /dev/null
       echo "nimbus's token is in ${vault_token_parameter}; the nodes will pick it up."
 
+  # Run once, from a Session Manager shell on the leading server, before the
+  # first `vault.nu update`: `sudo vault-operator-token`. It asks for the root
+  # token (not echoed), and stores a token that may only manage Raft and step
+  # down in SSM, where vault.nu's commands on any server read it. The root
+  # token never leaves the shell.
+  - path: /usr/local/bin/vault-operator-token
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      read -rsp "Root token: " VAULT_TOKEN; echo
+      export VAULT_TOKEN
+      vault() { docker exec -i -e VAULT_TOKEN="$VAULT_TOKEN" vault vault "$@"; }
+      printf '%s\n' \
+        'path "sys/storage/raft/*" { capabilities = ["create", "read", "update", "delete", "list", "sudo"] }' \
+        'path "sys/step-down"      { capabilities = ["update", "sudo"] }' \
+        | vault policy write raft-operator -
+      vault token create -orphan -no-default-policy -policy=raft-operator -ttl=87600h -explicit-max-ttl=87600h -field=token \
+        | aws ssm put-parameter --region ${region} --name '${vault_operator_token_parameter}' --type SecureString --overwrite --value file:///dev/stdin > /dev/null
+      echo "The operator token is in ${vault_operator_token_parameter}."
+
   # The data volume is attached after boot; wait for it, format it the first
   # time only, and mount it.
   - path: /usr/local/bin/vault-mount-data
@@ -82,6 +118,7 @@ write_files:
       blkid "$device" > /dev/null || mkfs.xfs "$device"
       mkdir -p /opt/vault/data
       mountpoint -q /opt/vault/data || mount "$device" /opt/vault/data
+      mkdir -p /opt/vault/data/raft
       grep -q /opt/vault/data /etc/fstab || echo "$device /opt/vault/data xfs defaults,nofail 0 2" >> /etc/fstab
       # The image runs Vault as uid 100.
       chown -R 100:1000 /opt/vault/data

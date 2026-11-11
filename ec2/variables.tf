@@ -108,8 +108,30 @@ variable "environments_mount" {
 
 variable "vault_image" {
   type        = string
-  description = "Vault container image, pinned"
-  default     = "hashicorp/vault:2.1.2"
+  description = "Vault container image, pinned by digest (the tag stays for reading); a new value replaces Vault, so change it with the routine in AlygnApp's docs/AwsCommands.md"
+  default     = "hashicorp/vault:2.1.2@sha256:c2f666266f383d2cf424d86b8bb8ce7d065562173ffec2b476d762943608bb55"
+}
+
+variable "vault_servers" {
+  type        = map(object({ host = number }))
+  description = "Vault's servers, by node id, each with its host number in the first private subnet. Written by vault.nu (vault-servers.auto.tfvars.json); one server, or two during an update"
+
+  validation {
+    condition     = length(var.vault_servers) >= 1 && length(var.vault_servers) <= 2
+    error_message = "Vault runs one server, or two while vault.nu updates it."
+  }
+}
+
+variable "vault_address_claimed" {
+  type        = bool
+  description = "Whether vault.nu has put the nodes' Vault address (.100) on a server; until then the nodes use the first server's own address. Written by vault.nu"
+  default     = false
+}
+
+variable "vault_update_checks" {
+  type        = list(string)
+  description = "Health addresses `vault.nu update` checks before it starts and after the handover; each must answer 200 with \"status\":\"ok\""
+  default     = []
 }
 
 variable "vault_instance_type" {

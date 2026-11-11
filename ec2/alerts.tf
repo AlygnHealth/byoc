@@ -92,12 +92,15 @@ resource "aws_cloudwatch_metric_alarm" "server_errors" {
   }
 }
 
-# There is one Vault, so a failed check also acts: AWS moves the instance off
-# bad hardware (its address and volumes go with it) or reboots it, and Vault
-# unseals itself through KMS.
+# A failed check on a Vault server also acts: AWS moves the instance off bad
+# hardware (its addresses and volumes go with it) or reboots it, and Vault
+# unseals itself through KMS. One pair per server, so an update's second server
+# is watched too.
 resource "aws_cloudwatch_metric_alarm" "vault_host" {
-  alarm_name          = "${var.cluster_name}-vault-host"
-  alarm_description   = "Vault's host failed its system status check; recovering the instance."
+  for_each = aws_instance.vault
+
+  alarm_name          = "${var.cluster_name}-vault-host-${each.key}"
+  alarm_description   = "Vault server ${each.key}'s host failed its system status check; recovering the instance."
   namespace           = "AWS/EC2"
   metric_name         = "StatusCheckFailed_System"
   statistic           = "Maximum"
@@ -108,12 +111,14 @@ resource "aws_cloudwatch_metric_alarm" "vault_host" {
   alarm_actions       = ["arn:aws:automate:${data.aws_region.current.name}:ec2:recover", aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
-  dimensions = { InstanceId = aws_instance.vault.id }
+  dimensions = { InstanceId = each.value.id }
 }
 
 resource "aws_cloudwatch_metric_alarm" "vault_instance" {
-  alarm_name          = "${var.cluster_name}-vault-instance"
-  alarm_description   = "Vault's instance failed its status check; rebooting it."
+  for_each = aws_instance.vault
+
+  alarm_name          = "${var.cluster_name}-vault-instance-${each.key}"
+  alarm_description   = "Vault server ${each.key}'s instance failed its status check; rebooting it."
   namespace           = "AWS/EC2"
   metric_name         = "StatusCheckFailed_Instance"
   statistic           = "Maximum"
@@ -124,7 +129,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_instance" {
   alarm_actions       = ["arn:aws:automate:${data.aws_region.current.name}:ec2:reboot", aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
-  dimensions = { InstanceId = aws_instance.vault.id }
+  dimensions = { InstanceId = each.value.id }
 }
 
 locals {

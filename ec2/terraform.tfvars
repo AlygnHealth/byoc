@@ -33,3 +33,10 @@ logs_from_cloudwatch   = true
 # unison_min_instances = 1
 # unison_max_instances = 8
 # unison_desired_instances = 2
+
+# What `vault.nu update` checks before it starts and after the handover: each
+# must answer 200 with `"status":"ok"`, or the update goes back to the old server.
+vault_update_checks = [
+  "https://byoc.alygnhealth.com/services/s/bbarker/alygnhealth/api/health",
+  "https://byoc.alygnhealth.com/services/s/bbarker/alygnhealth-test/api/health",
+]

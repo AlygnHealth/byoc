@@ -76,7 +76,7 @@ data "cloudinit_config" "unison-cloudinint" {
         region               = data.aws_region.current.name
         dynamodb_table       = aws_dynamodb_table.unison_cloud_byoc_state.id
         cluster_name         = var.cluster_name
-        vault_host           = local.vault_private_ip
+        vault_host           = local.vault_node_address
         environments_mount   = var.environments_mount
         node_log_group       = aws_cloudwatch_log_group.nodes.name
         logs_from_cloudwatch = var.logs_from_cloudwatch
