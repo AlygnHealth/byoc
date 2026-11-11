@@ -281,7 +281,7 @@ resource "aws_iam_role_policy_attachment" "dlm" {
 }
 
 resource "aws_dlm_lifecycle_policy" "vault" {
-  description        = "${var.cluster_name} Vault data, daily"
+  description        = "${var.cluster_name} Vault data daily"
   execution_role_arn = aws_iam_role.dlm.arn
   state              = "ENABLED"
 
@@ -290,7 +290,7 @@ resource "aws_dlm_lifecycle_policy" "vault" {
     target_tags    = { Snapshot = local.vault_snapshot_tag }
 
     schedule {
-      name      = "daily, kept 14 days"
+      name      = "daily kept 14 days"
       copy_tags = true
 
       create_rule {
