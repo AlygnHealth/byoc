@@ -25,6 +25,8 @@ const SERVERS_FILE = "vault-servers.auto.tfvars.json"
 # A new server's name and host number in the first private subnet, inside the
 # block vault.tf reserves for Vault.
 const SLOTS = [{name: "a", host: 97} {name: "b", host: 98}]
+const REFRESHES_GOING = ["Pending" "InProgress" "Cancelling" "RollbackInProgress" "Baking"]
+
 const VAULT_TARGETS = [
     "aws_ebs_volume.vault_data"
     "aws_instance.vault"
@@ -270,6 +272,15 @@ def service-checks [] {
     }
 }
 
+# Every node group's instance refreshes still going: a node rolling while
+# Vault changes hands would fail its checks for a reason of its own.
+def rolling-groups [] {
+    let region = ((outputs).aws_region)
+    aws-json autoscaling describe-auto-scaling-groups --region $region | get AutoScalingGroups.AutoScalingGroupName | where {|group|
+        aws-json autoscaling describe-instance-refreshes --region $region --auto-scaling-group-name $group | get InstanceRefreshes | where Status in $REFRESHES_GOING | is-not-empty
+    }
+}
+
 def services-pass [] { service-checks | all {|check| $check.ok } }
 
 def show-checks [] {
@@ -418,6 +429,8 @@ def "main update" [] {
     if (read-servers).vault_address_claimed != true { error make {msg: "setup is not finished: `nu vault.nu setup`"} }
     if (leader-on $old.id) != $old.name { error make {msg: $"($old.name) does not lead its cluster"} }
     if (address-holder) != $old.id { error make {msg: $"($old.name) does not hold the nodes' address"} }
+    let rolling = (rolling-groups)
+    if ($rolling | is-not-empty) { error make {msg: $"nodes are rolling in ($rolling | str join ', '); run the update once the roll is done. Nothing changed"} }
     publish-cluster-port $old
     print "The services, before anything changes:"
     show-checks
