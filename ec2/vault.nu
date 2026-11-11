@@ -162,7 +162,10 @@ def instances [] {
     $out.vault_instance_ids | transpose name id | each {|row|
         let described = (aws-json ec2 describe-instances --region $out.aws_region --instance-ids $row.id | get Reservations.0.Instances.0)
         {
-            name: $row.name, id: $row.id, ip: ($out.vault_server_ips | get $row.name)
+            # The instance's own address, not the `vault_server_ips` output: a
+            # targeted apply (apply-vault) leaves outputs that name no targeted
+            # resource as they were, so a server just added is missing there.
+            name: $row.name, id: $row.id, ip: $described.PrivateIpAddress
             launched: ($described.LaunchTime | into datetime)
             interface: ($described.NetworkInterfaces | where Attachment.DeviceIndex == 0 | first | get NetworkInterfaceId)
             volume: ($described.BlockDeviceMappings | where DeviceName == "/dev/sdf" | get -o 0.Ebs.VolumeId)
