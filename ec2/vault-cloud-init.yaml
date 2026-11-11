@@ -145,6 +145,7 @@ write_files:
         --rm \
         --cap-add IPC_LOCK \
         -p 8200:8200 \
+        -p 8201:8201 \
         -e VAULT_ADDR=http://127.0.0.1:8200 \
         -v /etc/vault:/vault/config:ro \
         -v /opt/vault/data:/vault/data \

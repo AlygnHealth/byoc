@@ -392,6 +392,24 @@ def "main finish" [] {
     print $"($new.name) is Vault's server now."
 }
 
+# Raft between servers runs over the cluster port, 8201, which the first
+# server's container did not publish (only 8200): a server joining it could
+# reach its API and never its Raft. Publishes it, with a restart of a few
+# seconds, asked first. A server started from the current cloud-init has it.
+def publish-cluster-port [server: record] {
+    let unit = "/etc/systemd/system/vault.service"
+    let published = (remote $server.id $"grep -c -- '-p 8201:8201' ($unit) || true" | str trim)
+    if $published != "0" { return }
+    print $"($server.name)'s Vault does not publish the cluster port \(8201\), which the new server's Raft needs."
+    if not (ask $"  Restart Vault on ($server.name) with it published? Every service answers 500 for a few seconds.") { error make {msg: "the cluster port is not published; nothing changed"} }
+    remote $server.id $"set -euo pipefail
+sed -i 's/-p 8200:8200/-p 8200:8200 -p 8201:8201/' ($unit)
+grep -q -- '-p 8201:8201' ($unit)
+systemctl daemon-reload
+systemctl restart vault" | ignore
+    wait-until $"Vault on ($server.name) to unseal and lead" 120 {|| (not (vault-status $server.id).sealed) and (leader-on $server.id) == $server.name }
+}
+
 # The update: a new server on the current image and cloud-init, joined,
 # handed the leadership and the address; then a check by a person, and the
 # old server removed. A failure before that check goes back to the old server.
@@ -400,6 +418,7 @@ def "main update" [] {
     if (read-servers).vault_address_claimed != true { error make {msg: "setup is not finished: `nu vault.nu setup`"} }
     if (leader-on $old.id) != $old.name { error make {msg: $"($old.name) does not lead its cluster"} }
     if (address-holder) != $old.id { error make {msg: $"($old.name) does not hold the nodes' address"} }
+    publish-cluster-port $old
     print "The services, before anything changes:"
     show-checks
     if not (services-pass) { error make {msg: "a service fails already, so a failure after the handover could not be told apart; nothing changed"} }
@@ -433,7 +452,7 @@ def "main update" [] {
     } catch {|failure|
         print $"Update stopped: ($failure.msg)"
         main abort
-        error make {msg: "update aborted; the old server serves"}
+        error make {msg: $"update aborted, and the old server serves. It stopped because: ($failure.msg)"}
     }
     let new = ((two-servers).new)
     print $"($new.name) leads and holds the address, and every service answers ok; ($old.name) still has every write."
