@@ -37,3 +37,31 @@ module "vpc" {
     Project     = "unison-cloud"
   }
 }
+
+# S3 and DynamoDB through gateway endpoints rather than the NAT gateway: free,
+# and the nodes' storage traffic stops paying NAT's per-gigabyte charge.
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = module.vpc.vpc_id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = module.vpc.private_route_table_ids
+
+  tags = {
+    Name        = "${var.cluster_name}-s3"
+    Environment = "byoc"
+    Project     = "unison-cloud"
+  }
+}
+
+resource "aws_vpc_endpoint" "dynamodb" {
+  vpc_id            = module.vpc.vpc_id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.dynamodb"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = module.vpc.private_route_table_ids
+
+  tags = {
+    Name        = "${var.cluster_name}-dynamodb"
+    Environment = "byoc"
+    Project     = "unison-cloud"
+  }
+}

@@ -2,10 +2,9 @@
 package_update: true
 package_upgrade: true
 
-# Amazon Linux 2023 ships the AWS CLI; `awscli` is no package name there, and
-# one unknown name stops the whole list installing, docker included.
 packages:
   - docker
+  - amazon-cloudwatch-agent
 
 # No SSH users or keys: operators reach a node through SSM Session Manager
 # (`aws ssm start-session --target <instance-id>`), which needs no open port.
@@ -19,9 +18,18 @@ runcmd:
   - |
     IMDS=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60") && sed s/IPADDRESS/$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS" http://169.254.169.254/latest/meta-data/local-ipv4)/g < /etc/nimbus-template/config.template.json > /etc/nimbus/secrets/partial-config.json
   - systemctl daemon-reload
+  - systemctl enable --now nimbus-vault-token.service
   - systemctl enable --now unison-cloud
+  - /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/etc/cloudwatch-agent.json
 
 write_files:
+  # The CloudWatch agent's configuration: memory and disk used, by role
+  # (monitoring.tf).
+  - path: /etc/cloudwatch-agent.json
+    permissions: "0644"
+    encoding: base64
+    content: ${cloudwatch_agent_config}
+
   - path: /etc/nimbus-template/config.template.json
     permissions: "0644"
     encoding: base64
@@ -41,6 +49,44 @@ write_files:
       printf '{"cloudApiToken":"%s"}\n' "$token" > /etc/nimbus/secrets/.cloud-token.tmp
       mv -f /etc/nimbus/secrets/.cloud-token.tmp /etc/nimbus/secrets/cloud-token.json
 
+  # Vault is initialised by an operator after the first apply, so its token
+  # may not exist yet when a node boots. This keeps asking for it; the nimbus
+  # wrapper turns /etc/nimbus/secrets/vault_token into vault.json and reloads.
+  - path: /usr/local/bin/nimbus-vault-token
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      set -uo pipefail
+      umask 077
+      while true; do
+        if value=$(aws ssm get-parameter --region ${region} --with-decryption --name '${vault_token_parameter}' --query Parameter.Value --output text 2>/dev/null); then
+          if ! [ -f /etc/nimbus/secrets/vault_token ] || [ "$(cat /etc/nimbus/secrets/vault_token)" != "$value" ]; then
+            printf '%s' "$value" > /etc/nimbus/secrets/.vault_token.tmp
+            mv -f /etc/nimbus/secrets/.vault_token.tmp /etc/nimbus/secrets/vault_token
+            echo "nimbus vault token updated"
+          fi
+          sleep 300
+        else
+          sleep 30
+        fi
+      done
+
+  - path: /etc/systemd/system/nimbus-vault-token.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Keep the nimbus Vault token current from SSM
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      Restart=always
+      RestartSec=10
+      ExecStart=/usr/local/bin/nimbus-vault-token
+
+      [Install]
+      WantedBy=multi-user.target
+
   - path: /etc/systemd/system/unison-cloud.service
     permissions: "0644"
     content: |
@@ -55,7 +101,6 @@ write_files:
       RestartSec=10
       ExecStartPre=-/usr/bin/docker stop unison-cloud
       ExecStartPre=-/usr/bin/docker rm unison-cloud
-      # Writes the cluster token from SSM where the wrapper merges config.
       ExecStartPre=/usr/local/bin/nimbus-fetch-secrets
       ExecStart=/usr/bin/docker run \
         --name unison-cloud \
@@ -67,7 +112,13 @@ write_files:
         -e NIMBUS_POLL_IAM_CREDENTIALS=true \
         -e NIMBUS_MAX_CONNECTIONS_PER_HOST=64 \
         -v /etc/nimbus/secrets:/etc/nimbus/secrets \
-        unisoncomputing/unison-cloud:${unison_cloud_image_tag}
+        --log-driver awslogs \
+        --log-opt awslogs-region=${region} \
+        --log-opt awslogs-group=${node_log_group} \
+        --log-opt awslogs-stream=%H \
+        --log-opt mode=non-blocking \
+        --log-opt max-buffer-size=4m \
+        ${unison_cloud_image}:${unison_cloud_image_tag}
       ExecStop=/usr/bin/docker stop unison-cloud
 
       [Install]

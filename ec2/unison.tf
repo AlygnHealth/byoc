@@ -64,15 +64,23 @@ data "cloudinit_config" "unison-cloudinint" {
     merge_type   = "list(append)+dict(recurse_array)+str()"
     content_type = "text/cloud-config"
     content = templatefile("${path.module}/cloud-init.yaml", {
+      unison_cloud_image      = var.unison_cloud_image
       unison_cloud_image_tag  = var.unison_cloud_image_tag
       region                  = data.aws_region.current.name
+      node_log_group          = aws_cloudwatch_log_group.nodes.name
       cluster_token_parameter = aws_ssm_parameter.cluster_token.name
+      vault_token_parameter   = local.vault_token_parameter
+      cloudwatch_agent_config = base64encode(local.cloudwatch_agent_config["nodes"])
       config_template = base64encode(templatefile("${path.module}/config.json.template", {
         blob_bucket_name     = aws_s3_bucket.unison_cloud_byoc_blobs.bucket
         services_bucket_name = aws_s3_bucket.unison_cloud_byoc_native_services.bucket
         region               = data.aws_region.current.name
         dynamodb_table       = aws_dynamodb_table.unison_cloud_byoc_state.id
         cluster_name         = var.cluster_name
+        vault_host           = local.vault_node_address
+        environments_mount   = var.environments_mount
+        node_log_group       = aws_cloudwatch_log_group.nodes.name
+        logs_from_cloudwatch = var.logs_from_cloudwatch
       }))
     })
   }
@@ -144,9 +152,6 @@ resource "aws_autoscaling_group" "unison" {
   max_size         = var.unison_max_instances
   desired_capacity = var.unison_desired_instances
 
-  # A version number, not "$Latest": with "$Latest" the group's own settings
-  # never change, so a changed launch template started no instance refresh
-  # and nodes kept running the old one.
   launch_template {
     id      = aws_launch_template.unison.id
     version = aws_launch_template.unison.latest_version
@@ -177,6 +182,5 @@ resource "aws_autoscaling_group" "unison" {
     }
   }
 
-  # Nodes start only once the cluster is registered and their token is in SSM.
   depends_on = [terraform_data.cluster_registration]
 }

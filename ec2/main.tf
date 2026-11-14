@@ -4,14 +4,14 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
   }
 
-  backend "local" {
-    path = "terraform.tfstate"
+  backend "s3" {
+    bucket       = "alygnhealth-tofu-state"
+    key          = "ec2/terraform.tfstate"
+    region       = "us-west-2"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 
@@ -31,9 +31,6 @@ data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
 
-  # Only the standard images (al2023-ami-2023.<version>-kernel-...). The
-  # template's al2023-ami-*-x86_64 also matches Amazon's special-purpose
-  # images, and most_recent takes whichever is newest.
   filter {
     name   = "name"
     values = ["al2023-ami-2023.*-x86_64"]
@@ -50,9 +47,6 @@ data "aws_ami" "amazon_linux_2023" {
   most_recent = true
   owners      = ["amazon"]
 
-  # Only the standard images (al2023-ami-2023.<version>-kernel-...). The
-  # template's al2023-ami-*-x86_64 also matches Amazon's special-purpose
-  # images, and most_recent takes whichever is newest.
   filter {
     name   = "name"
     values = ["al2023-ami-2023.*-x86_64"]

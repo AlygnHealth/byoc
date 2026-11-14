@@ -78,7 +78,7 @@ resource "aws_iam_role_policy" "unison_dynamo" {
   })
 }
 
-# SSM: read the cluster token, nothing else.
+# SSM: read the cluster token and the Vault token, nothing else.
 resource "aws_iam_role_policy" "unison_ssm_parameters" {
   name = "${var.cluster_name}-unison-ssm-parameters"
   role = aws_iam_role.unison.id
@@ -87,15 +87,19 @@ resource "aws_iam_role_policy" "unison_ssm_parameters" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["ssm:GetParameter"]
-        Resource = [aws_ssm_parameter.cluster_token.arn]
+        Effect = "Allow"
+        Action = ["ssm:GetParameter"]
+        Resource = [
+          aws_ssm_parameter.cluster_token.arn,
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${local.vault_token_parameter}"
+        ]
       }
     ]
   })
 }
 
-# CloudWatch logs, limited to this cluster's log groups.
+# CloudWatch logs, limited to this cluster's log groups: the nodes write their
+# own logs, and read them back to answer log requests (logs_from_cloudwatch).
 resource "aws_iam_role_policy" "unison_cloudwatch" {
   name = "${var.cluster_name}-unison-cloudwatch-policy"
   role = aws_iam_role.unison.id
@@ -109,7 +113,8 @@ resource "aws_iam_role_policy" "unison_cloudwatch" {
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents",
-          "logs:DescribeLogStreams"
+          "logs:DescribeLogStreams",
+          "logs:FilterLogEvents"
         ]
         Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/${var.cluster_name}/*"
       }
