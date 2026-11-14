@@ -4,6 +4,7 @@ package_upgrade: true
 
 packages:
   - docker
+  - amazon-cloudwatch-agent
 
 # No SSH users or keys: operators reach a node through SSM Session Manager
 # (`aws ssm start-session --target <instance-id>`), which needs no open port.
@@ -19,8 +20,16 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable --now nimbus-vault-token.service
   - systemctl enable --now unison-cloud
+  - /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/etc/cloudwatch-agent.json
 
 write_files:
+  # The CloudWatch agent's configuration: memory and disk used, by role
+  # (monitoring.tf).
+  - path: /etc/cloudwatch-agent.json
+    permissions: "0644"
+    encoding: base64
+    content: ${cloudwatch_agent_config}
+
   - path: /etc/nimbus-template/config.template.json
     permissions: "0644"
     encoding: base64

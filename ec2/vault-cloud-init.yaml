@@ -4,8 +4,16 @@ package_upgrade: true
 
 packages:
   - docker
+  - amazon-cloudwatch-agent
 
 write_files:
+  # The CloudWatch agent's configuration: memory and disk used, by role
+  # (monitoring.tf).
+  - path: /etc/cloudwatch-agent.json
+    permissions: "0644"
+    encoding: base64
+    content: ${cloudwatch_agent_config}
+
   - path: /etc/vault/vault.hcl
     permissions: "0644"
     content: |
@@ -160,3 +168,4 @@ runcmd:
   - systemctl enable docker
   - systemctl daemon-reload
   - systemctl enable --now vault
+  - /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/etc/cloudwatch-agent.json

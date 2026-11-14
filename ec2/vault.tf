@@ -212,6 +212,7 @@ resource "aws_instance" "vault" {
     vault_operator_token_parameter = local.vault_operator_token_parameter
     node_id                        = each.key
     server_ip                      = local.vault_server_ips[each.key]
+    cloudwatch_agent_config        = base64encode(local.cloudwatch_agent_config["vault"])
   })
   user_data_replace_on_change = true
 
