@@ -20,6 +20,10 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable --now nimbus-vault-token.service
   - systemctl enable --now unison-cloud
+  # The agent names this node's zone in its metrics (monitoring.tf), which it
+  # cannot read by itself.
+  - |
+    IMDS=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60") && sed -i s/${zone_placeholder}/$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS" http://169.254.169.254/latest/meta-data/placement/availability-zone)/g /etc/cloudwatch-agent.json
   - /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/etc/cloudwatch-agent.json
 
 write_files:

@@ -88,6 +88,18 @@ variable "alert_email" {
   description = "Where alarms and budget warnings go. Required, so that an apply cannot quietly drop them; keep it out of a public repository with a git-ignored *.auto.tfvars"
 }
 
+variable "disk_alarm_percent" {
+  type        = number
+  description = "Share of a disk used, on a node or Vault, at which its alarm goes out"
+  default     = 80
+}
+
+variable "memory_alarm_percent" {
+  type        = number
+  description = "Share of memory used, on a node or Vault, that raises an alarm when held for ten minutes"
+  default     = 90
+}
+
 variable "monthly_budget_usd" {
   type        = number
   description = "Monthly spend, for the whole AWS account, at which the budget's last warning goes out"

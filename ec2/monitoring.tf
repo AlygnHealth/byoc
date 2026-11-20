@@ -3,17 +3,33 @@
 # dashboards, 10 custom metrics a month).
 #
 # The CloudWatch agent on each node and Vault server reports memory and disk
-# used by role ("nodes", "vault"), not by instance: a roll or a `vault.nu
-# update` then adds no new metrics, so the count stays at five (memory and the
-# root disk for each role, and Vault's data disk). Where several instances
-# share a role, the dashboard shows the highest. CPU stays per instance, from
-# EC2's own free metrics.
+# used by role ("nodes", "vault"), and a node also by its availability zone,
+# not by instance: a roll or a `vault.nu update` then adds no new metrics. The
+# group keeps one node in each zone, so a zone names a node and the dashboard
+# can show each one. That makes seven metrics: memory and the root disk for
+# each zone's node, and for Vault, plus Vault's data disk. CPU stays per
+# instance, from EC2's own free metrics.
 
 locals {
   host_metrics_namespace = "${var.cluster_name}/hosts"
 
-  # The agent's configuration for a role; `disks` are the mount points watched.
-  cloudwatch_agent_config = { for role, disks in { nodes = ["/"], vault = ["/", "/opt/vault/data"] } : role => jsonencode({
+  # What each role's agent watches: the mount points, and whether it names its
+  # zone. The agent cannot read the zone itself, so a node's cloud-init puts it
+  # in place of `host_metrics_zone_placeholder` from the instance metadata.
+  host_metrics_roles = {
+    nodes = { disks = ["/"], by_zone = true }
+    vault = { disks = ["/", "/opt/vault/data"], by_zone = false }
+  }
+  host_metrics_zone_placeholder = "AVAILABILITYZONE"
+
+  # The dimensions every metric of a role carries.
+  host_metrics_dimensions = { for role, watch in local.host_metrics_roles : role => merge(
+    { Role = role },
+    { for key, value in { Zone = local.host_metrics_zone_placeholder } : key => value if watch.by_zone },
+  ) }
+
+  # The agent's configuration for a role.
+  cloudwatch_agent_config = { for role, watch in local.host_metrics_roles : role => jsonencode({
     agent = {
       metrics_collection_interval = 60
       omit_hostname               = true
@@ -23,13 +39,13 @@ locals {
       metrics_collected = {
         mem = {
           measurement       = ["mem_used_percent"]
-          append_dimensions = { Role = role }
+          append_dimensions = local.host_metrics_dimensions[role]
         }
         disk = {
           measurement       = ["used_percent"]
-          resources         = disks
+          resources         = watch.disks
           drop_device       = true
-          append_dimensions = { Role = role }
+          append_dimensions = local.host_metrics_dimensions[role]
         }
       }
     }
@@ -68,16 +84,16 @@ locals {
       title   = "CPU % (each instance)"
       metrics = [[{ expression = "SEARCH('{AWS/EC2,InstanceId} MetricName=\"CPUUtilization\"', 'Average', 300)", id = "cpu", label = "" }]]
     }
+    # One line per node (by zone) and one for Vault. A search with no schema
+    # matches every set of dimensions, and returns only metrics written in the
+    # last two weeks, so the old by-role node lines drop out by themselves.
     memory = {
-      title = "Memory used %"
-      metrics = [
-        [local.host_metrics_namespace, "mem_used_percent", "Role", "nodes", { stat = "Maximum", label = "nodes" }],
-        [local.host_metrics_namespace, "mem_used_percent", "Role", "vault", { stat = "Maximum", label = "Vault" }],
-      ]
+      title   = "Memory used % (each node, and Vault)"
+      metrics = [[{ expression = "SEARCH('Namespace=\"${local.host_metrics_namespace}\" MetricName=\"mem_used_percent\"', 'Maximum', 300)", id = "memory", label = "" }]]
     }
     disk = {
-      title   = "Disk used %"
-      metrics = [[{ expression = "SEARCH('{${local.host_metrics_namespace},Role,path,fstype} MetricName=\"used_percent\"', 'Maximum', 300)", id = "disk", label = "" }]]
+      title   = "Disk used % (each node, and Vault's two)"
+      metrics = [[{ expression = "SEARCH('Namespace=\"${local.host_metrics_namespace}\" MetricName=\"used_percent\"', 'Maximum', 300)", id = "disk", label = "" }]]
     }
     requests = {
       title = "Requests and errors (per 5 min)"
@@ -140,6 +156,9 @@ resource "aws_cloudwatch_dashboard" "cluster" {
               aws_cloudwatch_metric_alarm.dynamodb_throttles.arn,
               aws_cloudwatch_metric_alarm.dynamodb_errors.arn,
             ],
+            [for alarm in aws_cloudwatch_metric_alarm.node_memory : alarm.arn],
+            [for alarm in aws_cloudwatch_metric_alarm.host_disk : alarm.arn],
+            [aws_cloudwatch_metric_alarm.vault_memory.arn],
             [for alarm in aws_cloudwatch_metric_alarm.vault_host : alarm.arn],
             [for alarm in aws_cloudwatch_metric_alarm.vault_instance : alarm.arn],
           )

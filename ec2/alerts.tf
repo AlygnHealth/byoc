@@ -201,3 +201,82 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_errors" {
     }
   }
 }
+
+# Memory and disk, from the CloudWatch agent (monitoring.tf). Each alarm reads
+# one metric, by zone for the nodes, so the email names the node. A node being
+# replaced leaves a gap in its zone's line, which leaves the alarm as it was;
+# a node that is gone is the healthy-nodes alarm's to report.
+locals {
+  # The disks watched: each zone's node's root disk, and Vault's two.
+  host_disk_alarms = merge(
+    { for zone in var.aws_availability_zones : "nodes-${zone}" => {
+      description = "The node in ${zone}"
+      dimensions  = { Role = "nodes", Zone = zone, path = "/", fstype = "xfs" }
+    } },
+    {
+      "vault-root" = {
+        description = "Vault's root disk"
+        dimensions  = { Role = "vault", path = "/", fstype = "xfs" }
+      }
+      "vault-data" = {
+        description = "Vault's data disk"
+        dimensions  = { Role = "vault", path = "/opt/vault/data", fstype = "xfs" }
+      }
+    },
+  )
+}
+
+resource "aws_cloudwatch_metric_alarm" "host_disk" {
+  for_each = local.host_disk_alarms
+
+  alarm_name          = "${var.cluster_name}-disk-${each.key}"
+  alarm_description   = "${each.value.description} is over ${var.disk_alarm_percent}% full."
+  namespace           = local.host_metrics_namespace
+  metric_name         = "used_percent"
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.disk_alarm_percent
+  treat_missing_data  = "missing"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = each.value.dimensions
+}
+
+resource "aws_cloudwatch_metric_alarm" "node_memory" {
+  for_each = toset(var.aws_availability_zones)
+
+  alarm_name          = "${var.cluster_name}-memory-nodes-${each.key}"
+  alarm_description   = "The node in ${each.key} has used over ${var.memory_alarm_percent}% of its memory for ten minutes."
+  namespace           = local.host_metrics_namespace
+  metric_name         = "mem_used_percent"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 10
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.memory_alarm_percent
+  treat_missing_data  = "missing"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = { Role = "nodes", Zone = each.key }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_memory" {
+  alarm_name          = "${var.cluster_name}-memory-vault"
+  alarm_description   = "Vault has used over ${var.memory_alarm_percent}% of its memory for ten minutes."
+  namespace           = local.host_metrics_namespace
+  metric_name         = "mem_used_percent"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 10
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.memory_alarm_percent
+  treat_missing_data  = "missing"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = { Role = "vault" }
+}
