@@ -12,3 +12,4 @@ secrets.env
 .envrc
 outputs/
 .terraform.lock.hcl
+*.auto.tfvars

@@ -24,7 +24,7 @@ resource "aws_ssm_parameter" "cluster_token" {
 resource "terraform_data" "cluster_registration" {
   triggers_replace = [
     var.cluster_name,
-    aws_lb.main.dns_name,
+    var.cluster_domain,
     var.cluster_token_generation,
   ]
 
@@ -36,16 +36,16 @@ resource "terraform_data" "cluster_registration" {
       auth="Authorization: Bearer $UNISON_ACCESS_TOKEN"
       cluster_id=$(curl -fsS -X POST -H "$auth" "$api/$CLUSTER_NAME")
       curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
-        --data "\"https://$CLUSTER_HOST\"" "$api/$cluster_id/clusterUri" > /dev/null
+        --data "\"https://$CLUSTER_DOMAIN\"" "$api/$cluster_id/clusterUri" > /dev/null
       curl -fsS -X POST -H "$auth" "$api/$cluster_id/token" \
         | aws ssm put-parameter --region "$AWS_REGION" --name "$PARAMETER" \
             --type SecureString --overwrite --value file:///dev/stdin > /dev/null
-      echo "Registered $CLUSTER_NAME ($cluster_id) at https://$CLUSTER_HOST; node token stored in $PARAMETER."
+      echo "Registered $CLUSTER_NAME ($cluster_id) at https://$CLUSTER_DOMAIN; node token stored in $PARAMETER."
     EOT
     environment = {
       UNISON_ACCESS_TOKEN = local.unison_token
       CLUSTER_NAME        = var.cluster_name
-      CLUSTER_HOST        = aws_lb.main.dns_name
+      CLUSTER_DOMAIN      = var.cluster_domain
       PARAMETER           = aws_ssm_parameter.cluster_token.name
       AWS_REGION          = var.aws_region
     }

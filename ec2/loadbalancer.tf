@@ -1,36 +1,27 @@
-# Generate TLS certificate for the load balancer hostname
-resource "tls_private_key" "proxy_key" {
-  algorithm = "RSA"
-  rsa_bits  = 2048
-}
+# Certificate for the cluster's own name, validated by a DNS record that the
+# operator adds in Cloudflare (`tofu output acm_validation_records`). `tofu
+# apply` waits at aws_acm_certificate_validation until the record resolves.
+resource "aws_acm_certificate" "cluster" {
+  domain_name       = var.cluster_domain
+  validation_method = "DNS"
 
-resource "tls_self_signed_cert" "proxy_cert" {
-  private_key_pem = tls_private_key.proxy_key.private_key_pem
-
-  subject {
-    common_name  = aws_lb.main.dns_name
-    organization = "Unison BYOC"
-    country      = "US"
-    province     = "MA"
-    locality     = "Boston"
+  lifecycle {
+    create_before_destroy = true
   }
 
-  dns_names = [
-    aws_lb.main.dns_name,
-    "localhost"
-  ]
+  tags = {
+    Name        = "${var.cluster_name}-cert"
+    Environment = "byoc"
+    Project     = "unison-cloud"
+  }
+}
 
-  ip_addresses = [
-    "127.0.0.1"
-  ]
+resource "aws_acm_certificate_validation" "cluster" {
+  certificate_arn = aws_acm_certificate.cluster.arn
 
-  validity_period_hours = 8760 # 1 year
-
-  allowed_uses = [
-    "key_encipherment",
-    "digital_signature",
-    "server_auth",
-  ]
+  timeouts {
+    create = "2h"
+  }
 }
 
 # Security group for load balancer
@@ -54,7 +45,6 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # The load balancer only ever talks to the nodes.
   egress {
     description = "To the nodes"
     from_port   = 8081
@@ -86,8 +76,7 @@ resource "aws_lb" "main" {
   # default of 60 seconds cuts any job that runs longer.
   idle_timeout = 3600
 
-  enable_deletion_protection = false
-  # Requests with malformed headers are dropped rather than passed on.
+  enable_deletion_protection = true
   drop_invalid_header_fields = true
 
   tags = {
@@ -141,32 +130,16 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# ALB Listener for HTTPS: TLS 1.2 and 1.3 only, with current ciphers.
+# ALB Listener for HTTPS: TLS 1.2 and 1.3 only.
 resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.main.arn
   port              = "443"
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = aws_acm_certificate.proxy.arn
+  certificate_arn   = aws_acm_certificate_validation.cluster.certificate_arn
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.unison.arn
-  }
-}
-
-# Upload certificate to ACM
-resource "aws_acm_certificate" "proxy" {
-  private_key      = tls_private_key.proxy_key.private_key_pem
-  certificate_body = tls_self_signed_cert.proxy_cert.cert_pem
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = {
-    Name        = "${var.cluster_name}-proxy-cert"
-    Environment = "byoc"
-    Project     = "unison-cloud"
   }
 }

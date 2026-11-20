@@ -19,7 +19,13 @@ resource "aws_dynamodb_table" "unison_cloud_byoc_state" {
     type = "S"
   }
 
-  # Encrypted at rest with a KMS key, not only the default AWS-owned key.
+  # Every app table and every release record lives here.
+  deletion_protection_enabled = true
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
   server_side_encryption {
     enabled = true
   }
